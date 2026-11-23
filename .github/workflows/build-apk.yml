@@ -1,93 +1,30 @@
-name: Build Global-Translator APK
+name: Auto-Unzip & Deploy to GitHub Pages
 on:
   push:
-    branches: [ main, master ]
+    branches: ["main"]
   workflow_dispatch:
-
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 jobs:
-  build-apk:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-      - name: Setup Capacitor Android App
+      - uses: actions/checkout@v4
+      - name: Unzip App Archive
         run: |
-          mkdir -p gt_app/www
-          cd gt_app
-          echo '<!DOCTYPE html><html><body>Loading...</body></html>' > www/index.html
-          npm init -y
-          npm install @capacitor/core@^6.1.2 @capacitor/cli@^6.1.2 @capacitor/android@^6.1.2
-          cat << 'EOF' > capacitor.config.json
-          {
-            "appId": "com.globaltranslator.app",
-            "appName": "Global Translator",
-            "webDir": "www",
-            "server": {
-              "url": "https://vihangarasanjanawithanage39-hash.github.io/Global-Translator/",
-              "cleartext": false
-            }
-          }
-          EOF
-          npx cap add android
-          npx cap sync android
-          python3 - << 'PYEOF'
-          mf_path = 'android/app/src/main/AndroidManifest.xml'
-          mf = open(mf_path, encoding='utf-8').read()
-          perms = '''
-              <uses-permission android:name="android.permission.INTERNET" />
-              <uses-permission android:name="android.permission.RECORD_AUDIO" />
-              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-          '''
-          if 'RECORD_AUDIO' not in mf:
-              mf = mf.replace('<application', perms + '\n    <application', 1)
-          open(mf_path, 'w', encoding='utf-8').write(mf)
-          java_code = '''package com.globaltranslator.app;
-          import android.Manifest;
-          import android.content.pm.PackageManager;
-          import android.os.Bundle;
-          import android.webkit.PermissionRequest;
-          import android.webkit.WebChromeClient;
-          import androidx.core.app.ActivityCompat;
-          import androidx.core.content.ContextCompat;
-          import com.getcapacitor.BridgeActivity;
-          public class MainActivity extends BridgeActivity {
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                      ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, 1002);
-                  }
-              }
-              @Override
-              public void onStart() {
-                  super.onStart();
-                  if (this.bridge != null && this.bridge.getWebView() != null) {
-                      this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {
-                          @Override
-                          public void onPermissionRequest(final PermissionRequest request) {
-                              runOnUiThread(() -> request.grant(request.getResources()));
-                          }
-                      });
-                  }
-              }
-          }'''
-          open('android/app/src/main/java/com/globaltranslator/app/MainActivity.java', 'w', encoding='utf-8').write(java_code)
-          PYEOF
-      - name: Build Signed GlobalTranslator.apk
-        run: |
-          cd gt_app/android
-          chmod +x gradlew
-          ./gradlew assembleRelease
-          keytool -genkeypair -v -keystore gt.keystore -alias gt -keyalg RSA -keysize 2048 -validity 10000 -storepass gt2026 -keypass gt2026 -dname "CN=GlobalTranslator, O=App, C=LK"
-          BT=$(ls -d "$ANDROID_HOME/build-tools/"* | sort -V | tail -n 1)
-          "$BT/zipalign" -v -p 4 app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/gt-aligned.apk
-          "$BT/apksigner" sign --ks gt.keystore --ks-key-alias gt --ks-pass pass:gt2026 --key-pass pass:gt2026 --out app/build/outputs/apk/release/GlobalTranslator.apk app/build/outputs/apk/release/gt-aligned.apk
-      - uses: actions/upload-artifact@v4
+          mkdir -p _tmp _site
+          ZIP_FILE=$(ls -t *.zip | head -n 1)
+          unzip -o "$ZIP_FILE" -d _tmp
+          INDEX_DIR=$(dirname "$(find _tmp -name index.html | head -n 1)")
+          cp -r "$INDEX_DIR"/. _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
-          name: GlobalTranslator-APK
-          path: gt_app/android/app/build/outputs/apk/release/GlobalTranslator.apk
+          path: '_site'
+      - id: deployment
+        uses: actions/deploy-pages@v4
